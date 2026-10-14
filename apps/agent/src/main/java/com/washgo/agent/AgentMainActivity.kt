@@ -1,10 +1,19 @@
 package com.washgo.agent
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,17 +28,20 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.DirectionsCar
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Navigation
-import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MyLocation
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.Sensors
+import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -37,28 +49,43 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.washgo.core.designsystem.component.RapidoOtpInput
-import com.washgo.core.designsystem.component.RapidoPrimaryButton
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.washgo.agent.data.local.AgentTokenManager
+import com.washgo.agent.data.model.AgentProfileDto
+import com.washgo.agent.data.model.AgentStatsDto
+import com.washgo.agent.data.repository.AgentRepository
+import com.washgo.agent.ui.AgentDashboardViewModel
+import com.washgo.agent.ui.AgentDashboardViewModelFactory
+import com.washgo.agent.ui.auth.AgentAuthStep
+import com.washgo.agent.ui.auth.AgentAuthViewModel
+import com.washgo.agent.ui.auth.AgentAuthViewModelFactory
+import com.washgo.agent.ui.auth.AgentLoginScreen
+import com.washgo.agent.ui.auth.AgentOnboardingScreen
+import com.washgo.agent.ui.auth.AgentOtpScreen
+import com.washgo.agent.ui.auth.AgentVerificationStatusScreen
+import com.washgo.agent.ui.components.ActiveNavigationScreen
+import com.washgo.agent.ui.components.IncomingJobRequestSheet
 import com.washgo.core.designsystem.component.RapidoRatingBadge
-import com.washgo.core.designsystem.component.RapidoStatusPill
 import com.washgo.core.designsystem.theme.RapidoCarbonBlack
-import com.washgo.core.designsystem.theme.RapidoDangerRed
 import com.washgo.core.designsystem.theme.RapidoDivider
+import com.washgo.core.designsystem.theme.RapidoDangerRed
 import com.washgo.core.designsystem.theme.RapidoSuccessGreen
 import com.washgo.core.designsystem.theme.RapidoSurfaceLight
 import com.washgo.core.designsystem.theme.RapidoSurfaceWhite
@@ -66,508 +93,541 @@ import com.washgo.core.designsystem.theme.RapidoTextPrimary
 import com.washgo.core.designsystem.theme.RapidoTextSecondary
 import com.washgo.core.designsystem.theme.RapidoTheme
 import com.washgo.core.designsystem.theme.RapidoYellowPrimary
-import com.washgo.agent.data.network.AcceptBookingPayload
-import com.washgo.agent.data.network.AgentNetworkClient
-import com.washgo.agent.data.network.IncomingJobOffer
-import com.washgo.core.model.BookingState
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+
+import androidx.activity.viewModels
 
 class AgentMainActivity : ComponentActivity() {
+    private val tokenManager by lazy {
+        AgentTokenManager.getInstance(applicationContext)
+    }
+
+    private val authViewModel: AgentAuthViewModel by viewModels {
+        AgentAuthViewModelFactory(
+            AgentRepository.getInstance(applicationContext),
+            tokenManager
+        )
+    }
+
+    private val dashboardViewModel: AgentDashboardViewModel by viewModels {
+        AgentDashboardViewModelFactory(
+            AgentRepository.getInstance(applicationContext),
+            tokenManager
+        )
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (BuildConfig.DEBUG) {
+            handleAuditIntent(intent)
+        }
         setContent {
             RapidoTheme {
-                AgentDashboardScreen()
+                AgentApp(
+                    dashboardViewModel = dashboardViewModel,
+                    authViewModel = authViewModel
+                )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (BuildConfig.DEBUG) {
+            handleAuditIntent(intent)
+        }
+    }
+
+    private fun handleAuditIntent(intent: android.content.Intent?) {
+        if (intent == null) return
+        val step = intent.getStringExtra("AUDIT_AUTH_STEP")
+        val status = intent.getStringExtra("AUDIT_AGENT_STATUS")
+        val isMockLogin = intent.getBooleanExtra("AUDIT_MOCK_LOGIN", false)
+        val isLogout = intent.getBooleanExtra("AUDIT_LOGOUT", false)
+
+        if (isLogout) {
+            tokenManager.clear()
+            authViewModel.setAuditStep(AgentAuthStep.PHONE_INPUT)
+        } else if (step != null) {
+            tokenManager.clear()
+            when (step) {
+                "OTP" -> authViewModel.setAuditStep(AgentAuthStep.OTP_INPUT)
+                "ONBOARDING" -> authViewModel.setAuditStep(AgentAuthStep.ONBOARDING)
+                "VERIFICATION_STATUS" -> authViewModel.setAuditStep(AgentAuthStep.VERIFICATION_STATUS)
+                else -> authViewModel.setAuditStep(AgentAuthStep.PHONE_INPUT)
+            }
+        } else if (status != null || isMockLogin) {
+            val agentStatus = status ?: "APPROVED"
+            tokenManager.saveAgentSession(
+                accessToken = "audit-agent-token",
+                refreshToken = "audit-agent-refresh-token",
+                agentId = "agt-audit-01",
+                agentCode = "AGT-7821",
+                phone = "+91 98765 12340",
+                displayName = "Vikram Patel",
+                status = agentStatus
+            )
+            tokenManager.updateAgentStatus(agentStatus)
+        }
+
+        if (intent.hasExtra("AUDIT_ONLINE")) {
+            dashboardViewModel.setAuditOnline(intent.getBooleanExtra("AUDIT_ONLINE", false))
+        }
+        if (intent.getBooleanExtra("AUDIT_SIMULATE_JOB", false)) {
+            dashboardViewModel.simulateIncomingOffer()
+        }
+        if (intent.hasExtra("AUDIT_ACTIVE_JOB")) {
+            dashboardViewModel.setAuditActiveJob(intent.getBooleanExtra("AUDIT_ACTIVE_JOB", false))
         }
     }
 }
 
 @Composable
-fun AgentDashboardScreen() {
-    val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
+fun AgentApp(
+    dashboardViewModel: AgentDashboardViewModel = viewModel(
+        factory = AgentDashboardViewModelFactory(
+            AgentRepository.getInstance(LocalContext.current),
+            AgentTokenManager.getInstance(LocalContext.current)
+        )
+    ),
+    authViewModel: AgentAuthViewModel = viewModel(
+        factory = AgentAuthViewModelFactory(
+            AgentRepository.getInstance(LocalContext.current),
+            AgentTokenManager.getInstance(LocalContext.current)
+        )
+    )
+) {
+    val context = LocalContext.current
+    val tokenManager = remember { AgentTokenManager.getInstance(context) }
+    val isLoggedIn by tokenManager.isLoggedIn.collectAsState()
+    val agentStatus by tokenManager.agentStatus.collectAsState()
+    val authUiState by authViewModel.uiState.collectAsState()
 
-    var isOnline by remember { mutableStateOf(false) }
-    var incomingOffer by remember { mutableStateOf(false) }
-    var countdownSeconds by remember { mutableIntStateOf(20) }
-    var activeOffer by remember { mutableStateOf<IncomingJobOffer?>(null) }
+    var showVerificationScreen by remember { mutableStateOf(false) }
 
-    var currentJobState by remember { mutableStateOf<BookingState?>(null) }
-    var startOtp by remember { mutableStateOf("") }
-    var completeOtp by remember { mutableStateOf("") }
-
-    // Listen to real-time WebSocket incoming dispatch offers
-    LaunchedEffect(isOnline) {
-        if (isOnline) {
-            AgentNetworkClient.connectWebSocket()
-            AgentNetworkClient.incomingOffers.collect { offer ->
-                activeOffer = offer
-                countdownSeconds = offer.durationSeconds
-                incomingOffer = true
+    if (!isLoggedIn) {
+        when (authUiState.step) {
+            AgentAuthStep.PHONE_INPUT -> AgentLoginScreen(viewModel = authViewModel)
+            AgentAuthStep.OTP_INPUT -> AgentOtpScreen(viewModel = authViewModel)
+            AgentAuthStep.ONBOARDING -> AgentOnboardingScreen(viewModel = authViewModel)
+            AgentAuthStep.VERIFICATION_STATUS -> AgentVerificationStatusScreen(
+                viewModel = authViewModel,
+                onEnterDashboard = {
+                    showVerificationScreen = false
+                    dashboardViewModel.loadDashboardData()
+                }
+            )
+        }
+    } else if (!tokenManager.isApproved() || showVerificationScreen) {
+        AgentVerificationStatusScreen(
+            viewModel = authViewModel,
+            onEnterDashboard = {
+                if (tokenManager.isApproved()) {
+                    showVerificationScreen = false
+                    dashboardViewModel.loadDashboardData()
+                }
             }
+        )
+    } else {
+        AgentDashboardScreen(
+            viewModel = dashboardViewModel,
+            onOpenVerification = { showVerificationScreen = true }
+        )
+    }
+}
+
+@Composable
+fun AgentDashboardScreen(
+    viewModel: AgentDashboardViewModel,
+    onOpenVerification: () -> Unit
+) {
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    val isOnline by viewModel.isOnline.collectAsState()
+    val profile by viewModel.agentProfile.collectAsState()
+    val stats by viewModel.stats.collectAsState()
+    val incomingJob by viewModel.incomingJob.collectAsState()
+    val countdownSeconds by viewModel.countdownSeconds.collectAsState()
+    val activeJob by viewModel.activeJob.collectAsState()
+    val latestStatusUpdate by viewModel.latestStatusUpdate.collectAsState()
+    val currentLocation by viewModel.currentLocation.collectAsState()
+    val isWsConnected by viewModel.isWebSocketConnected.collectAsState()
+
+    var showLogoutDialog by remember { mutableStateOf(false) }
+
+    // Location Permission Launcher
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val fineGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true
+        val coarseGranted = permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+
+        if (fineGranted || coarseGranted) {
+            viewModel.toggleOnline(context, true)
         } else {
-            AgentNetworkClient.disconnect()
+            // Permission denied
+            viewModel.toggleOnline(context, false)
         }
     }
 
-    // 20s Countdown timer for incoming offer
-    LaunchedEffect(incomingOffer) {
-        if (incomingOffer) {
-            while (countdownSeconds > 0 && incomingOffer) {
-                delay(1000)
-                countdownSeconds--
-            }
-            if (countdownSeconds == 0) {
-                incomingOffer = false
-                activeOffer = null
-                snackbarHostState.showSnackbar("Offer expired. You missed a booking offer.")
-            }
+    LaunchedEffect(Unit) {
+        viewModel.snackbarMessages.collect { msg ->
+            snackbarHostState.showSnackbar(msg)
         }
     }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { paddingValues ->
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(RapidoSurfaceLight)
                 .padding(paddingValues)
         ) {
-            // Header: Agent Profile & Online Toggle
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = RapidoSurfaceWhite,
-                shadowElevation = 4.dp
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(CircleShape)
-                                .background(RapidoYellowPrimary),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "R",
-                                fontSize = 22.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = RapidoCarbonBlack
-                            )
-                        }
+            if (activeJob != null) {
+                ActiveNavigationScreen(
+                    job = activeJob!!,
+                    currentLocation = currentLocation,
+                    statusUpdate = latestStatusUpdate,
+                    onFinishJob = { viewModel.finishActiveJob() }
+                )
+            } else {
+                AgentDashboardContent(
+                    isOnline = isOnline,
+                    isWsConnected = isWsConnected,
+                    profile = profile,
+                    stats = stats,
+                    onToggleOnline = { wantOnline ->
+                        if (wantOnline) {
+                            val fineLoc = ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.ACCESS_FINE_LOCATION
+                            ) == PackageManager.PERMISSION_GRANTED
 
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Ramesh Kumar",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = RapidoTextPrimary
-                            )
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                RapidoRatingBadge(rating = 4.9, reviewsCount = 142)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "AGT-BLR-042",
-                                    fontSize = 12.sp,
-                                    color = RapidoTextSecondary
+                            if (fineLoc) {
+                                viewModel.toggleOnline(context, true)
+                            } else {
+                                val perms = mutableListOf(
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
                                 )
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                    perms.add(Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                                locationPermissionLauncher.launch(perms.toTypedArray())
                             }
+                        } else {
+                            viewModel.toggleOnline(context, false)
                         }
+                    },
+                    onOpenVerification = onOpenVerification,
+                    onRequestLogout = { showLogoutDialog = true },
+                    onSimulateJob = { viewModel.simulateIncomingOffer() }
+                )
+            }
 
-                        // Online / Offline Switch
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = if (isOnline) "ONLINE" else "OFFLINE",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                color = if (isOnline) RapidoSuccessGreen else RapidoTextSecondary
+            // Incoming Job Request Bottom Sheet Overlay
+            AnimatedVisibility(
+                visible = incomingJob != null,
+                enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                incomingJob?.let { job ->
+                    IncomingJobRequestSheet(
+                        job = job,
+                        countdownSeconds = countdownSeconds,
+                        onAccept = { viewModel.acceptJob() },
+                        onDecline = { viewModel.declineJob() }
+                    )
+                }
+            }
+        }
+    }
+
+    // Logout confirmation dialog
+    if (showLogoutDialog) {
+        AlertDialog(
+            onDismissRequest = { showLogoutDialog = false },
+            title = { Text("Log Out Partner Session") },
+            text = { Text("Going offline and signing out will pause all dispatch offer notifications.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showLogoutDialog = false
+                        viewModel.logout(context)
+                    }
+                ) {
+                    Text("Log Out", color = RapidoDangerRed, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLogoutDialog = false }) {
+                    Text("Cancel", color = RapidoTextSecondary)
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun AgentDashboardContent(
+    isOnline: Boolean,
+    isWsConnected: Boolean,
+    profile: AgentProfileDto?,
+    stats: AgentStatsDto,
+    onToggleOnline: (Boolean) -> Unit,
+    onOpenVerification: () -> Unit,
+    onRequestLogout: () -> Unit,
+    onSimulateJob: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(RapidoSurfaceLight)
+    ) {
+        // Top Partner Profile Bar
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = RapidoSurfaceWhite,
+            shadowElevation = 4.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(18.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Profile Initial Avatar
+                    val initial = profile?.displayName?.take(1)?.uppercase() ?: "P"
+                    Box(
+                        modifier = Modifier
+                            .size(50.dp)
+                            .clip(CircleShape)
+                            .background(RapidoYellowPrimary),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = initial,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = RapidoCarbonBlack
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(12.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = profile?.displayName ?: "Wash-Go Partner",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = RapidoTextPrimary
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RapidoRatingBadge(
+                                rating = profile?.averageRating ?: stats.averageRating,
+                                reviewsCount = profile?.totalReviewsCount ?: stats.totalReviewsCount
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Switch(
-                                checked = isOnline,
-                                onCheckedChange = { checked ->
-                                    isOnline = checked
-                                    if (checked) {
-                                        scope.launch {
-                                            snackbarHostState.showSnackbar("You are now ONLINE. Ready for wash dispatch.")
-                                            delay(1500)
-                                            incomingOffer = true // Simulate incoming job
-                                        }
-                                    } else {
-                                        incomingOffer = false
-                                        currentJobState = null
-                                    }
-                                },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = RapidoCarbonBlack,
-                                    checkedTrackColor = RapidoYellowPrimary
-                                )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = profile?.agentCode ?: "AGT-PARTNER",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = RapidoTextSecondary
                             )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Divider(color = RapidoDivider)
-                    Spacer(modifier = Modifier.height(14.dp))
+                    // Online Availability Switch
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (isOnline) "ONLINE" else "OFFLINE",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (isOnline) RapidoSuccessGreen else RapidoTextSecondary
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Switch(
+                            checked = isOnline,
+                            onCheckedChange = onToggleOnline,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = RapidoCarbonBlack,
+                                checkedTrackColor = RapidoYellowPrimary
+                            )
+                        )
+                    }
+                }
 
-                    // Daily Metrics Row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
+                Spacer(modifier = Modifier.height(14.dp))
+                HorizontalDivider(color = RapidoDivider)
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Daily Metrics from real backend stats!
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    val earningsDisplay = if (stats.todayEarnings > 0) {
+                        "₹${String.format("%.0f", stats.todayEarnings)}"
+                    } else {
+                        "₹0"
+                    }
+                    MetricCard(title = "Today's Earnings", value = earningsDisplay)
+                    MetricCard(title = "Washes Done", value = stats.todayCompletedWashes.toString())
+                    MetricCard(title = "Acceptance Rate", value = "${stats.acceptanceRatePercentage}%")
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+
+        // Dispatch Status Radar Card
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+        ) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = RapidoSurfaceWhite),
+                elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(64.dp)
+                            .clip(CircleShape)
+                            .background(if (isOnline) Color(0xFFE8F5E9) else RapidoSurfaceLight),
+                        contentAlignment = Alignment.Center
                     ) {
-                        MetricCard(title = "Today's Earnings", value = "₹1,240")
-                        MetricCard(title = "Washes Done", value = "4")
-                        MetricCard(title = "Acceptance Rate", value = "96%")
+                        Icon(
+                            imageVector = if (isOnline) Icons.Filled.Sensors else Icons.Filled.MyLocation,
+                            contentDescription = null,
+                            tint = if (isOnline) RapidoSuccessGreen else RapidoTextSecondary,
+                            modifier = Modifier.size(34.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Text(
+                        text = if (isOnline) "Searching for Nearby Wash Bookings..." else "You are currently Offline",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = RapidoTextPrimary
+                    )
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = if (isOnline)
+                            "Foreground GPS tracking active. Live location streaming to dispatch engine."
+                        else
+                            "Turn on the switch above to start broadcasting your location and receiving high-paying car & bike wash requests.",
+                        fontSize = 12.sp,
+                        color = RapidoTextSecondary,
+                        lineHeight = 16.sp,
+                        modifier = Modifier.padding(horizontal = 12.dp)
+                    )
+
+                    if (isOnline) {
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isWsConnected) RapidoSuccessGreen else Color.LightGray)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (isWsConnected) "WebSocket Connected (/ws/booking)" else "Connecting WebSocket...",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isWsConnected) RapidoSuccessGreen else RapidoTextSecondary
+                            )
+                        }
+
+                        // Simulation button: Strictly BuildConfig.DEBUG only!
+                        if (BuildConfig.DEBUG) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                            OutlinedButton(
+                                onClick = onSimulateJob,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.NotificationsActive,
+                                    contentDescription = null,
+                                    tint = RapidoCarbonBlack,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Simulate Job Offer (Dev Only)",
+                                    color = RapidoCarbonBlack,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Main Content Area
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
+            // Partner Quick Actions Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = RapidoSurfaceWhite),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
             ) {
-                // Incoming Broadcast Offer Alert
-                if (incomingOffer && currentJobState == null) {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(2.dp, RapidoYellowPrimary, RoundedCornerShape(20.dp)),
-                        shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(containerColor = RapidoSurfaceWhite),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(18.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RapidoStatusPill(
-                                    text = "NEW DISPATCH OFFER",
-                                    dotColor = RapidoYellowPrimary,
-                                    backgroundColor = Color(0xFFFFF9C4)
-                                )
-                                Spacer(modifier = Modifier.weight(1f))
-                                // Countdown timer
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(CircleShape)
-                                        .background(RapidoCarbonBlack),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "${countdownSeconds}s",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = RapidoYellowPrimary
-                                    )
-                                }
-                            }
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Partner Account",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = RapidoCarbonBlack
+                    )
 
-                            Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
-                            Text(
-                                text = activeOffer?.serviceName ?: "Sedan Foam & Detail Wash",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = RapidoTextPrimary
-                            )
-
-                            Spacer(modifier = Modifier.height(6.dp))
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Filled.LocationOn,
-                                    contentDescription = "Pickup",
-                                    tint = RapidoYellowPrimary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "${activeOffer?.customerAddress ?: "12th Main Road, Indiranagar"} (${activeOffer?.distanceMeters ?: 850} m away)",
-                                    fontSize = 13.sp,
-                                    color = RapidoTextSecondary
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(14.dp))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Your Net Earnings:",
-                                    fontSize = 14.sp,
-                                    color = RapidoTextSecondary
-                                )
-                                Text(
-                                    text = "₹${String.format("%.2f", activeOffer?.agentEarnings ?: 245.0)}",
-                                    fontSize = 22.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = RapidoSuccessGreen
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            // Accept / Decline Buttons
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Surface(
-                                    onClick = {
-                                        incomingOffer = false
-                                        activeOffer = null
-                                    },
-                                    shape = RoundedCornerShape(16.dp),
-                                    color = Color(0xFFFFEBEE),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(52.dp)
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(
-                                            text = "Decline",
-                                            fontSize = 15.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = RapidoDangerRed
-                                        )
-                                    }
-                                }
-
-                                RapidoPrimaryButton(
-                                    text = "Accept Job",
-                                    onClick = {
-                                        val offer = activeOffer
-                                        incomingOffer = false
-                                        currentJobState = BookingState.AGENT_EN_ROUTE
-                                        scope.launch {
-                                            try {
-                                                if (offer != null) {
-                                                    AgentNetworkClient.api.acceptBooking(
-                                                        offer.bookingId,
-                                                        AcceptBookingPayload(offer.bookingId, "00000000-0000-0000-0000-000000000001")
-                                                    )
-                                                }
-                                            } catch (_: Exception) {
-                                                // Retain local state on offline emulator sandbox
-                                            }
-                                            snackbarHostState.showSnackbar("Offer accepted! En route to customer.")
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1.5f)
-                                )
-                            }
-                        }
-                    }
-                }
-
-                // Active Job Flow (En Route -> In Progress -> Completed)
-                if (currentJobState != null) {
-                    Card(
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(containerColor = RapidoSurfaceWhite),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(18.dp)
+                        OutlinedButton(
+                            onClick = onOpenVerification,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = RapidoCarbonBlack)
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                RapidoStatusPill(
-                                    text = when (currentJobState) {
-                                        BookingState.AGENT_EN_ROUTE -> "EN ROUTE TO CUSTOMER"
-                                        BookingState.IN_PROGRESS -> "WASH IN PROGRESS"
-                                        BookingState.COMPLETED -> "WASH COMPLETED"
-                                        else -> "ACTIVE JOB"
-                                    },
-                                    dotColor = RapidoSuccessGreen
-                                )
-                                Spacer(modifier = Modifier.weight(1f))
-                                IconButton(onClick = { /* Call Customer */ }) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Call,
-                                        contentDescription = "Call",
-                                        tint = RapidoCarbonBlack
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            Text(
-                                text = "Customer: Aditi Sharma",
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = RapidoTextPrimary
-                            )
-                            Text(
-                                text = "Honda City • White (KA-01-MJ-9912)",
-                                fontSize = 13.sp,
-                                color = RapidoTextSecondary
-                            )
-
-                            Spacer(modifier = Modifier.height(16.dp))
-                            Divider(color = RapidoDivider)
-                            Spacer(modifier = Modifier.height(16.dp))
-
-                            when (currentJobState) {
-                                BookingState.AGENT_EN_ROUTE -> {
-                                    Text(
-                                        text = "Ask customer for 4-Digit Start OTP upon arrival:",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = RapidoTextSecondary
-                                    )
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    RapidoOtpInput(
-                                        otpValue = startOtp,
-                                        onOtpChange = { startOtp = it }
-                                    )
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    RapidoPrimaryButton(
-                                        text = "Verify Start OTP & Begin Wash",
-                                        onClick = {
-                                            if (startOtp.length == 4) {
-                                                currentJobState = BookingState.IN_PROGRESS
-                                                scope.launch {
-                                                    snackbarHostState.showSnackbar("OTP verified! Wash session active.")
-                                                }
-                                            }
-                                        },
-                                        enabled = startOtp.length == 4
-                                    )
-                                }
-
-                                BookingState.IN_PROGRESS -> {
-                                    Text(
-                                        text = "Enter Customer 4-Digit Completion OTP when finished:",
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = RapidoTextSecondary
-                                    )
-                                    Spacer(modifier = Modifier.height(10.dp))
-                                    RapidoOtpInput(
-                                        otpValue = completeOtp,
-                                        onOtpChange = { completeOtp = it }
-                                    )
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    RapidoPrimaryButton(
-                                        text = "Complete Wash & Collect ₹245",
-                                        onClick = {
-                                            if (completeOtp.length == 4) {
-                                                currentJobState = BookingState.COMPLETED
-                                                scope.launch {
-                                                    snackbarHostState.showSnackbar("Wash completed! ₹245 credited to your wallet.")
-                                                }
-                                            }
-                                        },
-                                        enabled = completeOtp.length == 4
-                                    )
-                                }
-
-                                BookingState.COMPLETED -> {
-                                    Column(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.CheckCircle,
-                                            contentDescription = "Success",
-                                            tint = RapidoSuccessGreen,
-                                            modifier = Modifier.size(56.dp)
-                                        )
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        Text(
-                                            text = "Great job! Earnings Credited",
-                                            fontSize = 18.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = RapidoTextPrimary
-                                        )
-                                        Spacer(modifier = Modifier.height(14.dp))
-                                        RapidoPrimaryButton(
-                                            text = "Ready for Next Wash",
-                                            onClick = {
-                                                currentJobState = null
-                                                startOtp = ""
-                                                completeOtp = ""
-                                            }
-                                        )
-                                    }
-                                }
-
-                                else -> {}
-                            }
+                            Icon(Icons.Default.VerifiedUser, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("KYC Status", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
-                    }
-                }
 
-                // Empty / Waiting State
-                if (!incomingOffer && currentJobState == null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(280.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Box(
-                                modifier = Modifier
-                                    .size(72.dp)
-                                    .clip(CircleShape)
-                                    .background(if (isOnline) Color(0xFFE8F5E9) else Color(0xFFEEEEEE)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.PowerSettingsNew,
-                                    contentDescription = "Online Status",
-                                    tint = if (isOnline) RapidoSuccessGreen else RapidoTextSecondary,
-                                    modifier = Modifier.size(36.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(14.dp))
-                            Text(
-                                text = if (isOnline) "You are Online & Ready" else "You are Offline",
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = RapidoTextPrimary
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = if (isOnline) "Waiting for incoming wash requests in your radius..." else "Toggle switch above to start receiving bookings",
-                                fontSize = 13.sp,
-                                color = RapidoTextSecondary
-                            )
+                        OutlinedButton(
+                            onClick = onRequestLogout,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = RapidoDangerRed)
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(16.dp), tint = RapidoDangerRed)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Log Out", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = RapidoDangerRed)
                         }
                     }
                 }
@@ -579,8 +639,16 @@ fun AgentDashboardScreen() {
 @Composable
 fun MetricCard(title: String, value: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(text = title, fontSize = 11.sp, color = RapidoTextSecondary)
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(text = value, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold, color = RapidoTextPrimary)
+        Text(
+            text = value,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = RapidoTextPrimary
+        )
+        Text(
+            text = title,
+            fontSize = 11.sp,
+            color = RapidoTextSecondary
+        )
     }
 }

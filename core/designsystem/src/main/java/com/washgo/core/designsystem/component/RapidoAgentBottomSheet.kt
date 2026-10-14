@@ -15,7 +15,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DirectionsCar
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -103,7 +103,7 @@ fun RapidoAgentBottomSheet(
             }
 
             Spacer(modifier = Modifier.height(12.dp))
-            Divider(color = RapidoDivider)
+            HorizontalDivider(color = RapidoDivider)
             Spacer(modifier = Modifier.height(12.dp))
 
             // Agents Candidate List

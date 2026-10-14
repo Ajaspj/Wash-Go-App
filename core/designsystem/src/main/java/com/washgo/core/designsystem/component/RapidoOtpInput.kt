@@ -33,6 +33,8 @@ fun RapidoOtpInput(
     modifier: Modifier = Modifier,
     otpLength: Int = 4
 ) {
+    val spacing = if (otpLength <= 4) 12.dp else 8.dp
+
     BasicTextField(
         value = otpValue,
         onValueChange = { newValue ->
@@ -40,20 +42,27 @@ fun RapidoOtpInput(
                 onOtpChange(newValue)
             }
         },
+        modifier = modifier,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
         decorationBox = {
             Row(
-                modifier = modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(spacing, Alignment.CenterHorizontally)
             ) {
                 for (i in 0 until otpLength) {
                     val char = otpValue.getOrNull(i)?.toString() ?: ""
                     val isFocused = otpValue.length == i
 
                     Box(
-                        modifier = Modifier
-                            .width(56.dp)
-                            .height(64.dp)
+                        modifier = (if (otpLength > 4) {
+                            Modifier
+                                .weight(1f)
+                                .height(56.dp)
+                        } else {
+                            Modifier
+                                .width(56.dp)
+                                .height(64.dp)
+                        })
                             .background(RapidoSurfaceWhite, RoundedCornerShape(12.dp))
                             .border(
                                 width = if (isFocused) 2.dp else 1.dp,
@@ -64,7 +73,7 @@ fun RapidoOtpInput(
                     ) {
                         Text(
                             text = char,
-                            fontSize = 24.sp,
+                            fontSize = if (otpLength > 4) 20.sp else 24.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = RapidoCarbonBlack,
                             textAlign = TextAlign.Center

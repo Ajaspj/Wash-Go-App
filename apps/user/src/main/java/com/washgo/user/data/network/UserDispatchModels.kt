@@ -7,7 +7,9 @@ data class CreateDispatchRequest(
     val longitude: Double,
     val address: String,
     val vehicleCategory: String,
-    val price: Double
+    val price: Double,
+    val packageName: String = "Deluxe Foam Wash",
+    val addOns: List<String> = emptyList()
 )
 
 data class DispatchOfferResponse(
@@ -27,5 +29,8 @@ data class BookingMatchPush(
     val agentLatitude: Double,
     val agentLongitude: Double,
     val etaMinutes: Int,
-    val startOtp: String = "4821"
+    val startOtp: String = "4821",
+    val packageTitle: String = "Deluxe Foam Wash",
+    val totalPrice: Double = 299.0,
+    val vehicleCategory: String = "Car"
 )

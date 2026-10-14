@@ -21,16 +21,21 @@ object UserWebSocketClient {
     private val _matchEvents = MutableSharedFlow<BookingMatchPush>(extraBufferCapacity = 10)
     val matchEvents: SharedFlow<BookingMatchPush> = _matchEvents.asSharedFlow()
 
-    fun connect(bookingId: String? = null) {
+    var tokenProvider: (() -> String?)? = null
+
+    fun connect(bookingId: String? = null, authToken: String? = null) {
         if (activeWebSocket != null) return
 
-        val wsUrl = BuildConfig.BASE_URL.replace("http://", "ws://").replace("https://", "wss://") + "ws"
+        val effectiveToken = authToken ?: tokenProvider?.invoke()
+        val wsBase = BuildConfig.BASE_URL.replace("http://", "ws://").replace("https://", "wss://").trimEnd('/') + "/ws"
+        val wsUrl = if (!effectiveToken.isNullOrBlank()) "$wsBase?token=$effectiveToken" else wsBase
         val request = Request.Builder().url(wsUrl).build()
 
         activeWebSocket = ApiClient.okHttpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                // Send STOMP CONNECT frame
-                val connectFrame = "CONNECT\naccept-version:1.2,1.1,1.0\nheart-beat:10000,10000\n\n\u0000"
+                // Send STOMP CONNECT frame with auth headers
+                val authHeaders = if (!effectiveToken.isNullOrBlank()) "passcode:$effectiveToken\nAuthorization:Bearer $effectiveToken\n" else ""
+                val connectFrame = "CONNECT\naccept-version:1.2,1.1,1.0\nheart-beat:10000,10000\n${authHeaders}\n\u0000"
                 webSocket.send(connectFrame)
 
                 // Subscribe to user bookings and specific booking topic

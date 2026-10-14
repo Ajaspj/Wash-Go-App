@@ -1,9 +1,10 @@
 package com.washgo.user.ui.booking
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,17 +19,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.ElectricBolt
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationSearching
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Verified
@@ -36,6 +41,8 @@ import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
@@ -46,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -56,6 +64,7 @@ import com.washgo.core.designsystem.theme.RapidoSuccessGreen
 import com.washgo.core.designsystem.theme.RapidoSurfaceWhite
 import com.washgo.core.designsystem.theme.RapidoTextPrimary
 import com.washgo.core.designsystem.theme.RapidoTextSecondary
+import com.washgo.core.designsystem.theme.RapidoYellowDark
 import com.washgo.core.designsystem.theme.RapidoYellowPrimary
 import com.washgo.core.model.VehicleCategory
 import com.washgo.user.data.network.BookingMatchPush
@@ -65,14 +74,22 @@ import com.washgo.user.data.network.NearbyAgentDto
 fun BookingBottomSheetContent(
     uiState: BookingUiState,
     selectedCategory: VehicleCategory,
+    packages: List<WashPackageItem>,
+    selectedPackage: WashPackageItem,
+    addOns: List<WashAddOnItem>,
+    selectedAddOnIds: Set<String>,
+    sortOption: AgentSortOption,
+    totalPriceText: String,
     onCategorySelected: (VehicleCategory) -> Unit,
+    onPackageSelected: (WashPackageItem) -> Unit,
+    onAddOnToggled: (String) -> Unit,
+    onSortOptionSelected: (AgentSortOption) -> Unit,
     onAgentSelected: (String) -> Unit,
     onConfirmBooking: (NearbyAgentDto) -> Unit,
+    onCancelBooking: () -> Unit,
     onRetrySearch: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val priceText = if (selectedCategory == VehicleCategory.BIKE) "₹149" else "₹299"
-
     Surface(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
@@ -95,32 +112,145 @@ fun BookingBottomSheetContent(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Vehicle Category Switcher (Bike vs Car)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                CategoryPill(
-                    title = "Bike Wash",
-                    price = "₹149",
-                    icon = Icons.AutoMirrored.Filled.DirectionsBike,
-                    isSelected = selectedCategory == VehicleCategory.BIKE,
-                    onClick = { onCategorySelected(VehicleCategory.BIKE) },
-                    modifier = Modifier.weight(1f)
-                )
-                CategoryPill(
-                    title = "Car Wash",
-                    price = "₹299",
-                    icon = Icons.Filled.DirectionsCar,
-                    isSelected = selectedCategory != VehicleCategory.BIKE,
-                    onClick = { onCategorySelected(VehicleCategory.SEDAN) },
-                    modifier = Modifier.weight(1f)
-                )
-            }
+            // Only show category and package selector if not yet matched
+            if (uiState !is BookingUiState.Matched) {
+                // Vehicle Category Switcher (Bike vs Car)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    CategoryPill(
+                        title = "Bike Wash",
+                        price = "from ₹149",
+                        icon = Icons.AutoMirrored.Filled.DirectionsBike,
+                        isSelected = selectedCategory == VehicleCategory.BIKE,
+                        onClick = { onCategorySelected(VehicleCategory.BIKE) },
+                        modifier = Modifier.weight(1f)
+                    )
+                    CategoryPill(
+                        title = "Car Wash",
+                        price = "from ₹299",
+                        icon = Icons.Filled.DirectionsCar,
+                        isSelected = selectedCategory != VehicleCategory.BIKE,
+                        onClick = { onCategorySelected(VehicleCategory.SEDAN) },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
 
-            Spacer(modifier = Modifier.height(14.dp))
-            HorizontalDivider(color = RapidoDivider)
-            Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(14.dp))
+
+                // Wash Packages Horizontal Selector
+                Text(
+                    text = "Select Wash Package",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = RapidoTextSecondary,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(packages, key = { it.id }) { pkg ->
+                        val isSelected = pkg.id == selectedPackage.id
+                        val price = if (selectedCategory == VehicleCategory.BIKE) pkg.priceBike else pkg.priceCar
+
+                        Surface(
+                            onClick = { onPackageSelected(pkg) },
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (isSelected) Color(0xFFFFFDE7) else Color(0xFFF8F9FA),
+                            modifier = Modifier
+                                .width(180.dp)
+                                .border(
+                                    width = if (isSelected) 2.dp else 1.dp,
+                                    color = if (isSelected) RapidoYellowPrimary else Color(0xFFEEEEEE),
+                                    shape = RoundedCornerShape(14.dp)
+                                )
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = pkg.name,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = RapidoTextPrimary,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Filled.CheckCircle,
+                                            contentDescription = "Selected",
+                                            tint = RapidoCarbonBlack,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = "${pkg.durationMinutes} mins • ₹${price.toInt()}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = RapidoCarbonBlack,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                                Text(
+                                    text = pkg.description,
+                                    fontSize = 10.sp,
+                                    color = RapidoTextSecondary,
+                                    maxLines = 2,
+                                    modifier = Modifier.padding(top = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Add-ons Chips
+                Text(
+                    text = "Optional Add-ons",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = RapidoTextSecondary,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(addOns, key = { it.id }) { addOn ->
+                        val isChecked = selectedAddOnIds.contains(addOn.id)
+                        FilterChip(
+                            selected = isChecked,
+                            onClick = { onAddOnToggled(addOn.id) },
+                            label = {
+                                Text(
+                                    text = "${addOn.name} (+₹${addOn.price.toInt()})",
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isChecked) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = RapidoYellowPrimary,
+                                selectedLabelColor = RapidoCarbonBlack
+                            )
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                HorizontalDivider(color = RapidoDivider)
+                Spacer(modifier = Modifier.height(10.dp))
+            }
 
             // Content based on BookingUiState
             when (uiState) {
@@ -146,14 +276,19 @@ fun BookingBottomSheetContent(
                 is BookingUiState.Success -> {
                     SuccessStateView(
                         state = uiState,
-                        priceText = priceText,
+                        sortOption = sortOption,
+                        totalPriceText = totalPriceText,
+                        onSortOptionSelected = onSortOptionSelected,
                         onAgentSelected = onAgentSelected,
                         onConfirmBooking = onConfirmBooking
                     )
                 }
 
                 is BookingUiState.Matched -> {
-                    MatchedStateView(match = uiState.match)
+                    MatchedStateView(
+                        match = uiState.match,
+                        onCancelBooking = onCancelBooking
+                    )
                 }
             }
         }
@@ -163,7 +298,9 @@ fun BookingBottomSheetContent(
 @Composable
 private fun SuccessStateView(
     state: BookingUiState.Success,
-    priceText: String,
+    sortOption: AgentSortOption,
+    totalPriceText: String,
+    onSortOptionSelected: (AgentSortOption) -> Unit,
     onAgentSelected: (String) -> Unit,
     onConfirmBooking: (NearbyAgentDto) -> Unit
 ) {
@@ -174,7 +311,7 @@ private fun SuccessStateView(
         ) {
             Text(
                 text = "Available Washers Nearby",
-                fontSize = 17.sp,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = RapidoTextPrimary
             )
@@ -193,18 +330,41 @@ private fun SuccessStateView(
             }
         }
 
-        Text(
-            text = "Sorted by shortest arrival time to your vehicle location",
-            fontSize = 12.sp,
-            color = RapidoTextSecondary,
-            modifier = Modifier.padding(top = 2.dp, bottom = 12.dp)
-        )
+        // Sorting Option Tabs
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            AgentSortOption.entries.forEach { option ->
+                val isSelected = option == sortOption
+                Surface(
+                    onClick = { onSortOptionSelected(option) },
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (isSelected) RapidoCarbonBlack else Color(0xFFF1F3F5),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Box(
+                        modifier = Modifier.padding(horizontal = 10.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = option.title,
+                            fontSize = 11.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isSelected) RapidoYellowPrimary else RapidoTextSecondary
+                        )
+                    }
+                }
+            }
+        }
 
         // LazyColumn of RapidoAgentRowCard
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(340.dp),
+                .height(300.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = PaddingValues(bottom = 12.dp)
         ) {
@@ -214,7 +374,7 @@ private fun SuccessStateView(
 
                 RapidoAgentRowCard(
                     agent = agent,
-                    priceText = priceText,
+                    priceText = totalPriceText,
                     isSelected = isSelected,
                     isBookingInProgress = isThisAgentBooking,
                     onSelect = { onAgentSelected(agent.id) },
@@ -230,26 +390,26 @@ private fun IdleStateView() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 24.dp),
+            .padding(vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Icon(
             imageVector = Icons.Filled.LocationSearching,
             contentDescription = "Search",
             tint = RapidoYellowPrimary,
-            modifier = Modifier.size(48.dp)
+            modifier = Modifier.size(44.dp)
         )
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Position Pin on Map",
-            fontSize = 16.sp,
+            text = "Pin Vehicle Spot & Select Service",
+            fontSize = 15.sp,
             fontWeight = FontWeight.Bold,
             color = RapidoTextPrimary
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "Drag the center pin to your vehicle's exact parking spot, then lock location to view nearby washing agents.",
-            fontSize = 13.sp,
+            text = "Move the Google Map pin to your vehicle's parking spot, select your wash tier above, then lock location to view real nearby agents.",
+            fontSize = 12.sp,
             color = RapidoTextSecondary,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 16.dp)
@@ -262,25 +422,25 @@ private fun LoadingStateView() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .height(260.dp),
+            .height(220.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
         CircularProgressIndicator(
-            modifier = Modifier.size(48.dp),
+            modifier = Modifier.size(44.dp),
             color = RapidoYellowPrimary,
             strokeWidth = 4.dp
         )
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
         Text(
             text = "Finding Nearby Washers...",
-            fontSize = 16.sp,
+            fontSize = 15.sp,
             fontWeight = FontWeight.Bold,
             color = RapidoTextPrimary
         )
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "Scanning active agents within 5 km radius via PostGIS",
+            text = "Scanning active agents within 5 km radius via PostGIS spatial engine",
             fontSize = 12.sp,
             color = RapidoTextSecondary
         )
@@ -292,13 +452,13 @@ private fun EmptyStateView(onRetry: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 24.dp),
+            .padding(vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Surface(
             shape = CircleShape,
             color = Color(0xFFFFF3E0),
-            modifier = Modifier.size(56.dp)
+            modifier = Modifier.size(52.dp)
         ) {
             Icon(
                 imageVector = Icons.Filled.Info,
@@ -307,22 +467,22 @@ private fun EmptyStateView(onRetry: () -> Unit) {
                 modifier = Modifier.padding(14.dp)
             )
         }
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
         Text(
             text = "No Washers in Your Area",
-            fontSize = 17.sp,
+            fontSize = 16.sp,
             fontWeight = FontWeight.Bold,
             color = RapidoTextPrimary
         )
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = "All mobile washing agents are currently busy or outside your 5 km radius. Try searching again shortly.",
-            fontSize = 13.sp,
+            text = "All mobile washing agents are currently committed or outside your 5 km radius. Please check back shortly.",
+            fontSize = 12.sp,
             color = RapidoTextSecondary,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 20.dp)
+            modifier = Modifier.padding(horizontal = 16.dp)
         )
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
         Button(
             onClick = onRetry,
             shape = RoundedCornerShape(12.dp),
@@ -352,13 +512,13 @@ private fun ErrorStateView(message: String, onRetry: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 24.dp),
+            .padding(vertical = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Surface(
             shape = CircleShape,
             color = Color(0xFFFFEBEE),
-            modifier = Modifier.size(56.dp)
+            modifier = Modifier.size(52.dp)
         ) {
             Icon(
                 imageVector = Icons.Filled.Warning,
@@ -367,22 +527,22 @@ private fun ErrorStateView(message: String, onRetry: () -> Unit) {
                 modifier = Modifier.padding(14.dp)
             )
         }
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(10.dp))
         Text(
             text = "Unable to Load Washers",
-            fontSize = 16.sp,
+            fontSize = 15.sp,
             fontWeight = FontWeight.Bold,
             color = RapidoTextPrimary
         )
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(4.dp))
         Text(
             text = message,
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             color = RapidoTextSecondary,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 20.dp)
+            modifier = Modifier.padding(horizontal = 16.dp)
         )
-        Spacer(modifier = Modifier.height(16.dp))
+        Spacer(modifier = Modifier.height(14.dp))
         OutlinedButton(
             onClick = onRetry,
             shape = RoundedCornerShape(12.dp)
@@ -445,13 +605,18 @@ private fun CategoryPill(
 }
 
 @Composable
-private fun MatchedStateView(match: BookingMatchPush) {
+private fun MatchedStateView(
+    match: BookingMatchPush,
+    onCancelBooking: () -> Unit
+) {
+    val context = LocalContext.current
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 10.dp)
+            .padding(vertical = 8.dp)
     ) {
-        // Top En Route Status Banner
+        // En Route Status Banner
         Surface(
             shape = RoundedCornerShape(16.dp),
             color = Color(0xFFFFF9C4),
@@ -482,7 +647,7 @@ private fun MatchedStateView(match: BookingMatchPush) {
                         color = RapidoCarbonBlack
                     )
                     Text(
-                        text = "Arriving at your vehicle in ~${match.etaMinutes} mins",
+                        text = "Arriving in ~${match.etaMinutes} mins • ${match.packageTitle} (₹${match.totalPrice.toInt()})",
                         fontSize = 12.sp,
                         color = RapidoTextSecondary
                     )
@@ -490,7 +655,7 @@ private fun MatchedStateView(match: BookingMatchPush) {
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         // Washer Profile Card
         Surface(
@@ -572,6 +737,10 @@ private fun MatchedStateView(match: BookingMatchPush) {
                 }
 
                 Surface(
+                    onClick = {
+                        val callIntent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:${match.agentPhone}"))
+                        context.startActivity(callIntent)
+                    },
                     shape = CircleShape,
                     color = RapidoCarbonBlack,
                     modifier = Modifier.size(42.dp)
@@ -586,7 +755,7 @@ private fun MatchedStateView(match: BookingMatchPush) {
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(12.dp))
 
         // Start OTP Card
         Surface(
@@ -623,6 +792,29 @@ private fun MatchedStateView(match: BookingMatchPush) {
                     textAlign = TextAlign.Center
                 )
             }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Cancel Booking Action
+        OutlinedButton(
+            onClick = onCancelBooking,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Close,
+                contentDescription = "Cancel",
+                tint = Color(0xFFD32F2F),
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "Cancel Booking",
+                color = Color(0xFFD32F2F),
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp
+            )
         }
     }
 }

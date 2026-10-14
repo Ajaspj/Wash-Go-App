@@ -93,7 +93,7 @@ object AgentNetworkClient {
     fun connectWebSocket(agentId: String = "00000000-0000-0000-0000-000000000001") {
         if (activeWebSocket != null) return
 
-        val wsUrl = BuildConfig.BASE_URL.replace("http://", "ws://").replace("https://", "wss://") + "ws"
+        val wsUrl = BuildConfig.BASE_URL.replace("http://", "ws://").replace("https://", "wss://").trimEnd('/') + "/ws"
         val request = Request.Builder().url(wsUrl).build()
 
         activeWebSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
