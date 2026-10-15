@@ -1,9 +1,12 @@
 package com.washgo.agent.ui.auth
 
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.washgo.agent.data.local.AgentTokenManager
+import com.washgo.agent.data.model.AgentDocumentDto
 import com.washgo.agent.data.model.AgentProfileDto
 import com.washgo.agent.data.model.RegisterAgentOtpRequest
 import com.washgo.agent.data.repository.AgentRepository
@@ -39,7 +42,11 @@ data class AgentAuthUiState(
     val resendCountdown: Int = 0,
     val debugOtp: String? = null,
     val registrationToken: String? = null,
-    val agentProfile: AgentProfileDto? = null
+    val agentProfile: AgentProfileDto? = null,
+    val documents: List<AgentDocumentDto> = emptyList(),
+    val isUploadingDocument: Boolean = false,
+    val selectedDocumentType: String = "GOVERNMENT_ID",
+    val documentNumberInput: String = ""
 ) {
     val isPhoneValid: Boolean
         get() = phoneInput.length == 10 && phoneInput.matches(Regex("^[6-9]\\d{9}$"))
@@ -274,6 +281,7 @@ class AgentAuthViewModel(
 
     fun refreshProfile() {
         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+        loadDocuments()
         viewModelScope.launch {
             val result = repository.getProfile()
             result.fold(
@@ -290,6 +298,56 @@ class AgentAuthViewModel(
                         it.copy(
                             isLoading = false,
                             errorMessage = error.message ?: "Could not refresh profile."
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    fun onDocumentTypeSelected(type: String) {
+        _uiState.update { it.copy(selectedDocumentType = type, errorMessage = null) }
+    }
+
+    fun onDocumentNumberChanged(number: String) {
+        _uiState.update { it.copy(documentNumberInput = number, errorMessage = null) }
+    }
+
+    fun loadDocuments() {
+        viewModelScope.launch {
+            val result = repository.listDocuments()
+            result.fold(
+                onSuccess = { docs ->
+                    _uiState.update { it.copy(documents = docs) }
+                },
+                onFailure = { /* non-fatal, preserve current */ }
+            )
+        }
+    }
+
+    fun uploadDocument(context: Context, uri: Uri) {
+        val currentType = _uiState.value.selectedDocumentType
+        val docNumber = _uiState.value.documentNumberInput
+        _uiState.update { it.copy(isUploadingDocument = true, errorMessage = null) }
+        viewModelScope.launch {
+            val result = repository.uploadDocumentFromUri(context, currentType, docNumber, uri)
+            result.fold(
+                onSuccess = { uploadedDoc ->
+                    _uiState.update { state ->
+                        val updated = listOf(uploadedDoc) + state.documents.filter { it.id != uploadedDoc.id }
+                        state.copy(
+                            isUploadingDocument = false,
+                            documents = updated,
+                            documentNumberInput = "",
+                            successMessage = "Document uploaded successfully for review."
+                        )
+                    }
+                },
+                onFailure = { error ->
+                    _uiState.update {
+                        it.copy(
+                            isUploadingDocument = false,
+                            errorMessage = error.message ?: "Failed to upload document"
                         )
                     }
                 }

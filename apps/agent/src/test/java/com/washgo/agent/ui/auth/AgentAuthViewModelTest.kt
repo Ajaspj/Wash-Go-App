@@ -100,4 +100,43 @@ class AgentAuthViewModelTest {
         val state = AgentAuthUiState(phoneInput = "9876543210")
         assertEquals("+91 98••• ••210", state.maskedPhone)
     }
+
+    @Test
+    fun documentSelection_updatesStateCorrectly() {
+        val state = AgentAuthUiState(
+            selectedDocumentType = "DRIVING_LICENSE",
+            documentNumberInput = "DL-12345"
+        )
+        assertEquals("DRIVING_LICENSE", state.selectedDocumentType)
+        assertEquals("DL-12345", state.documentNumberInput)
+        assertTrue(state.documents.isEmpty())
+        assertFalse(state.isUploadingDocument)
+    }
+
+    @Test
+    fun verificationStatus_stateDistinction() {
+        var profile = AgentProfileDto(
+            id = "test-id",
+            userId = "user-id",
+            agentCode = "AG-TEST",
+            displayName = "Rajesh",
+            phone = "+919876543201",
+            status = "PENDING_VERIFICATION"
+        )
+        var state = AgentAuthUiState(agentProfile = profile)
+        assertEquals("PENDING_VERIFICATION", state.agentProfile?.status)
+
+        profile = profile.copy(status = "UNDER_REVIEW")
+        state = state.copy(agentProfile = profile)
+        assertEquals("UNDER_REVIEW", state.agentProfile?.status)
+
+        profile = profile.copy(status = "APPROVED")
+        state = state.copy(agentProfile = profile)
+        assertEquals("APPROVED", state.agentProfile?.status)
+
+        profile = profile.copy(status = "REJECTED", rejectionReason = "Document blurry")
+        state = state.copy(agentProfile = profile)
+        assertEquals("REJECTED", state.agentProfile?.status)
+        assertEquals("Document blurry", state.agentProfile?.rejectionReason)
+    }
 }

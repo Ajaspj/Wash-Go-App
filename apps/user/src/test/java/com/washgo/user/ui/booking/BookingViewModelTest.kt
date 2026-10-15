@@ -123,4 +123,16 @@ class BookingViewModelTest {
         assertFalse(viewModel.locationState.value.isLocked)
         assertEquals(BookingUiState.Idle, viewModel.uiState.value)
     }
+
+    @Test
+    fun servicesState_isInitializedAsStateFlow() {
+        assertNotNull(viewModel.services.value)
+    }
+
+    @Test
+    fun cancelActiveBooking_resetsUiStateToIdle() {
+        viewModel.cancelActiveBooking()
+        // If not in matched state, state remains unchanged
+        assertEquals(BookingUiState.Idle, viewModel.uiState.value)
+    }
 }

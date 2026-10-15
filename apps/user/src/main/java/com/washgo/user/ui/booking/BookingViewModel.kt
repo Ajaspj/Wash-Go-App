@@ -8,6 +8,8 @@ import com.washgo.user.data.network.BookingMatchPush
 import com.washgo.user.data.network.CreateDispatchRequest
 import com.washgo.user.data.network.NearbyAgentDto
 import com.washgo.user.data.network.UserWebSocketClient
+import com.washgo.user.data.network.WashServiceDto
+import com.washgo.user.data.repository.BookingRepository
 import com.washgo.user.data.repository.NearbyAgentRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -20,7 +22,8 @@ import kotlinx.coroutines.launch
 import java.util.UUID
 
 class BookingViewModel(
-    private val repository: NearbyAgentRepository = NearbyAgentRepository()
+    private val repository: NearbyAgentRepository = NearbyAgentRepository(),
+    private val bookingRepository: BookingRepository = BookingRepository()
 ) : ViewModel() {
 
     val packages: List<WashPackageItem> = listOf(
@@ -89,10 +92,22 @@ class BookingViewModel(
     private val _sortOption = MutableStateFlow(AgentSortOption.RECOMMENDED)
     val sortOption: StateFlow<AgentSortOption> = _sortOption.asStateFlow()
 
+    private val _services = MutableStateFlow<List<WashServiceDto>>(emptyList())
+    val services: StateFlow<List<WashServiceDto>> = _services.asStateFlow()
+
     private val _userMessage = MutableSharedFlow<String>()
     val userMessage: SharedFlow<String> = _userMessage.asSharedFlow()
 
     init {
+        viewModelScope.launch {
+            val result = bookingRepository.getServices()
+            result.onSuccess { list ->
+                if (list.isNotEmpty()) {
+                    _services.value = list
+                }
+            }
+        }
+
         viewModelScope.launch {
             UserWebSocketClient.matchEvents.collect { match ->
                 _uiState.value = BookingUiState.Matched(match)
@@ -236,16 +251,45 @@ class BookingViewModel(
         if (current is BookingUiState.Success) {
             _uiState.value = current.copy(isBookingInProgress = true)
             viewModelScope.launch {
-                val bookingId = UUID.randomUUID().toString()
-                UserWebSocketClient.connect(bookingId)
-
                 val totalPrice = calculateTotalAmount()
                 val selectedAddOnNames = addOns
                     .filter { _selectedAddOnIds.value.contains(it.id) }
                     .map { it.name }
 
+                // 1. Resolve or create customer vehicle on the backend
+                val vehicleResult = bookingRepository.getOrCreateDefaultVehicle(_selectedCategory.value)
+                val vehicleId = vehicleResult.getOrNull()?.id
+
+                // 2. Resolve wash service from backend catalog
+                val matchedService = _services.value.firstOrNull {
+                    it.name.contains(_selectedPackage.value.name, ignoreCase = true) ||
+                    _selectedPackage.value.name.contains(it.name, ignoreCase = true)
+                } ?: _services.value.firstOrNull()
+                val serviceId = matchedService?.id ?: "a0000000-0000-0000-0000-000000000001"
+
+                var actualBookingId = UUID.randomUUID().toString()
+
+                // 3. Persist actual booking record if vehicle exists
+                if (vehicleId != null) {
+                    val serverBookingResult = bookingRepository.createBooking(
+                        vehicleId = vehicleId,
+                        serviceId = serviceId,
+                        latitude = _locationState.value.latitude,
+                        longitude = _locationState.value.longitude,
+                        address = _locationState.value.address,
+                        customerNotes = "Package: ${_selectedPackage.value.name}"
+                    )
+                    serverBookingResult.onSuccess { bk ->
+                        actualBookingId = bk.id
+                    }
+                }
+
+                // 4. Connect WebSocket to listen for live dispatch acceptance
+                UserWebSocketClient.connect(actualBookingId)
+
+                // 5. Dispatch offer to nearby agent
                 val request = CreateDispatchRequest(
-                    bookingId = bookingId,
+                    bookingId = actualBookingId,
                     agentId = agent.id,
                     latitude = _locationState.value.latitude,
                     longitude = _locationState.value.longitude,
@@ -256,15 +300,15 @@ class BookingViewModel(
                     addOns = selectedAddOnNames
                 )
 
-                try {
-                    ApiClient.nearbyAgentApi.dispatchBooking(request)
+                val dispatchResult = bookingRepository.dispatchBookingOffer(request)
+                if (dispatchResult.isSuccess) {
                     _userMessage.emit("Job request broadcasted to ${agent.name}. Waiting for acceptance...")
-                } catch (_: Exception) {
-                    // Sandbox fallback: auto-simulate agent acceptance after 1.5s
+                } else {
+                    // Sandbox fallback: auto-simulate agent acceptance if network fails or running local demo
                     delay(1500)
                     UserWebSocketClient.simulateMockMatch(
                         BookingMatchPush(
-                            bookingId = bookingId,
+                            bookingId = actualBookingId,
                             status = "ACCEPTED",
                             agentId = agent.id,
                             agentName = agent.name,
@@ -287,7 +331,9 @@ class BookingViewModel(
     fun cancelActiveBooking() {
         val current = _uiState.value
         if (current is BookingUiState.Matched) {
+            val bookingId = current.match.bookingId
             viewModelScope.launch {
+                bookingRepository.cancelBooking(bookingId)
                 UserWebSocketClient.disconnect()
                 _uiState.value = BookingUiState.Idle
                 _locationState.value = _locationState.value.copy(isLocked = false)

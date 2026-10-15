@@ -1,9 +1,12 @@
 package com.washgo.agent.data.repository
 
 import android.content.Context
+import android.net.Uri
+import android.provider.OpenableColumns
 import com.washgo.agent.data.local.AgentTokenManager
 import com.washgo.agent.data.model.AcceptBookingRequest
 import com.washgo.agent.data.model.AgentAuthResponse
+import com.washgo.agent.data.model.AgentDocumentDto
 import com.washgo.agent.data.model.AgentProfileDto
 import com.washgo.agent.data.model.AgentStatsDto
 import com.washgo.agent.data.model.BookingMatchResult
@@ -18,6 +21,9 @@ import com.washgo.agent.data.model.VerifyOtpRequest
 import com.washgo.agent.data.network.AgentApiClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 class AgentRepository private constructor(context: Context) {
@@ -130,6 +136,102 @@ class AgentRepository private constructor(context: Context) {
                 val errorMsg = parseErrorMessage(response.errorBody()?.string())
                     ?: response.body()?.message
                     ?: "Failed to submit for review"
+                Result.failure(Exception(errorMsg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun uploadDocument(
+        documentType: String,
+        documentNumber: String?,
+        fileName: String,
+        contentType: String,
+        fileBytes: ByteArray
+    ): Result<AgentDocumentDto> = withContext(Dispatchers.IO) {
+        try {
+            if (fileBytes.isEmpty()) {
+                return@withContext Result.failure(IllegalArgumentException("Uploaded document cannot be empty"))
+            }
+            if (fileBytes.size > 10 * 1024 * 1024) {
+                return@withContext Result.failure(IllegalArgumentException("Document exceeds the maximum allowable size of 10 MiB"))
+            }
+            val allowedMimeTypes = setOf("image/jpeg", "image/png", "image/webp", "application/pdf")
+            val effectiveMime = if (allowedMimeTypes.contains(contentType.lowercase())) {
+                contentType
+            } else {
+                when {
+                    fileName.endsWith(".jpg", ignoreCase = true) || fileName.endsWith(".jpeg", ignoreCase = true) -> "image/jpeg"
+                    fileName.endsWith(".png", ignoreCase = true) -> "image/png"
+                    fileName.endsWith(".webp", ignoreCase = true) -> "image/webp"
+                    fileName.endsWith(".pdf", ignoreCase = true) -> "application/pdf"
+                    else -> "application/pdf"
+                }
+            }
+
+            val docTypeBody = documentType.toRequestBody("text/plain".toMediaTypeOrNull())
+            val docNumberBody = documentNumber?.takeIf { it.isNotBlank() }?.toRequestBody("text/plain".toMediaTypeOrNull())
+            val fileRequestBody = fileBytes.toRequestBody(effectiveMime.toMediaTypeOrNull())
+            val filePart = MultipartBody.Part.createFormData("file", fileName, fileRequestBody)
+
+            val response = apiClient.agentApi.uploadDocument(docTypeBody, docNumberBody, filePart)
+            if (response.isSuccessful && response.body()?.data != null) {
+                Result.success(response.body()!!.data!!)
+            } else {
+                val errorMsg = parseErrorMessage(response.errorBody()?.string())
+                    ?: response.body()?.message
+                    ?: "Failed to upload KYC document"
+                Result.failure(Exception(errorMsg))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun uploadDocumentFromUri(
+        context: Context,
+        documentType: String,
+        documentNumber: String?,
+        uri: Uri
+    ): Result<AgentDocumentDto> = withContext(Dispatchers.IO) {
+        try {
+            val contentResolver = context.contentResolver
+            var fileName = "kyc_document.jpg"
+            var fileSize: Long = 0
+
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (cursor.moveToFirst()) {
+                    if (nameIndex != -1) fileName = cursor.getString(nameIndex) ?: fileName
+                    if (sizeIndex != -1) fileSize = cursor.getLong(sizeIndex)
+                }
+            }
+
+            if (fileSize > 10 * 1024 * 1024) {
+                return@withContext Result.failure(IllegalArgumentException("Document exceeds the maximum allowable size of 10 MiB"))
+            }
+
+            val mimeType = contentResolver.getType(uri) ?: "image/jpeg"
+            val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                ?: return@withContext Result.failure(IllegalStateException("Unable to read selected file"))
+
+            uploadDocument(documentType, documentNumber, fileName, mimeType, bytes)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun listDocuments(): Result<List<AgentDocumentDto>> = withContext(Dispatchers.IO) {
+        try {
+            val response = apiClient.agentApi.listDocuments()
+            if (response.isSuccessful && response.body()?.data != null) {
+                Result.success(response.body()!!.data!!)
+            } else {
+                val errorMsg = parseErrorMessage(response.errorBody()?.string())
+                    ?: response.body()?.message
+                    ?: "Failed to retrieve KYC documents"
                 Result.failure(Exception(errorMsg))
             }
         } catch (e: Exception) {
