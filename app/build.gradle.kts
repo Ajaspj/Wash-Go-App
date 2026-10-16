@@ -16,15 +16,22 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField(
-            "String",
-            "BASE_URL",
-            "\"${project.findProperty("BASE_URL") ?: "http://10.0.2.2:8080/"}\""
-        )
     }
 
     buildTypes {
+        debug {
+            val stagingUrl = (project.findProperty("STAGING_BASE_URL") as? String)
+                ?: (project.findProperty("DEBUG_BASE_URL") as? String)
+                ?: "https://wash-go-api-hsvt.onrender.com/"
+            val normalizedStagingUrl = if (stagingUrl.endsWith("/")) stagingUrl else "$stagingUrl/"
+            buildConfigField("String", "BASE_URL", "\"$normalizedStagingUrl\"")
+        }
         release {
+            val prodUrl = (project.findProperty("PROD_BASE_URL") as? String)
+                ?: (project.findProperty("BASE_URL") as? String)
+                ?: "https://wash-go-api.onrender.com/"
+            val normalizedProdUrl = if (prodUrl.endsWith("/")) prodUrl else "$prodUrl/"
+            buildConfigField("String", "BASE_URL", "\"$normalizedProdUrl\"")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
