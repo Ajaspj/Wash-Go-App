@@ -21,6 +21,11 @@ android {
             ?: ""
         manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
         buildConfigField("String", "MAPS_API_KEY", "\"$mapsApiKey\"")
+
+        val maplibreStyleUrl = (project.findProperty("MAPLIBRE_STYLE_URL") as? String)
+            ?: System.getenv("MAPLIBRE_STYLE_URL")
+            ?: "https://demotiles.maplibre.org/style.json"
+        buildConfigField("String", "MAPLIBRE_STYLE_URL", "\"$maplibreStyleUrl\"")
     }
 
     buildTypes {
@@ -65,6 +70,7 @@ dependencies {
     implementation(composeBom)
 
     implementation("androidx.core:core-ktx:1.13.1")
+    implementation(libs.androidx.core.splashscreen)
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.6")
@@ -85,6 +91,7 @@ dependencies {
     implementation(libs.play.services.location)
     implementation(libs.play.services.maps)
     implementation(libs.maps.compose)
+    implementation(libs.maplibre.android)
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
 
     implementation(project(":core:model"))

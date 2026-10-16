@@ -12,10 +12,12 @@
     <application
         android:name=".AgentApplication"
         android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="Wash-Go Partner"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:theme="@style/Theme.WashGo.Agent.Starting">
 
         <meta-data
             android:name="com.google.android.geo.API_KEY"
@@ -23,6 +25,7 @@
 
         <activity
             android:name=".AgentMainActivity"
+            android:theme="@style/Theme.WashGo.Agent.Starting"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

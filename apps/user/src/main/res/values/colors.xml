@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="washgo_yellow_primary">#FFD600</color>
+    <color name="washgo_yellow_dark">#F9C900</color>
+    <color name="washgo_carbon_black">#121212</color>
+    <color name="washgo_carbon_dark">#1E1E1E</color>
+    <color name="washgo_surface_light">#F5F5F7</color>
+    <color name="washgo_surface_white">#FFFFFF</color>
+</resources>

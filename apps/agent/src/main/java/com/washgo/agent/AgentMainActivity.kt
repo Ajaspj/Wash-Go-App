@@ -8,11 +8,19 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import com.washgo.core.designsystem.splash.SplashVariant
+import com.washgo.core.designsystem.splash.WashGoSplashScreen
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -116,16 +124,36 @@ class AgentMainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Install AndroidX SplashScreen before super.onCreate to eliminate initial blank frame
+        installSplashScreen()
         super.onCreate(savedInstanceState)
         if (BuildConfig.DEBUG) {
             handleAuditIntent(intent)
         }
         setContent {
             RapidoTheme {
-                AgentApp(
-                    dashboardViewModel = dashboardViewModel,
-                    authViewModel = authViewModel
-                )
+                var showSplash by rememberSaveable { mutableStateOf(true) }
+
+                AnimatedContent(
+                    targetState = showSplash,
+                    transitionSpec = {
+                        fadeIn(animationSpec = tween(250)) togetherWith
+                        fadeOut(animationSpec = tween(350)) + scaleOut(targetScale = 1.05f, animationSpec = tween(350))
+                    },
+                    label = "AgentSplashTransition"
+                ) { splashVisible ->
+                    if (splashVisible) {
+                        WashGoSplashScreen(
+                            variant = SplashVariant.AGENT,
+                            onSplashComplete = { showSplash = false }
+                        )
+                    } else {
+                        AgentApp(
+                            dashboardViewModel = dashboardViewModel,
+                            authViewModel = authViewModel
+                        )
+                    }
+                }
             }
         }
     }

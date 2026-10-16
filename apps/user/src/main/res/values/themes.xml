@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base Wash-Go Customer Application Theme -->
+    <style name="Theme.WashGo.User" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@color/washgo_yellow_primary</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/washgo_surface_white</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">@color/washgo_surface_light</item>
+    </style>
+
+    <!-- Native Launch Splash Theme (Android 12+ SplashScreen API & backward compatible) -->
+    <style name="Theme.WashGo.User.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/washgo_yellow_primary</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_icon_user</item>
+        <item name="postSplashScreenTheme">@style/Theme.WashGo.User</item>
+        <item name="android:statusBarColor">@color/washgo_yellow_primary</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/washgo_yellow_primary</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+</resources>

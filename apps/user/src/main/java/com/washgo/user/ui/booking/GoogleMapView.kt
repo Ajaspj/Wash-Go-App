@@ -3,21 +3,17 @@ package com.washgo.user.ui.booking
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.view.View
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,19 +49,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.android.gms.location.LocationServices
-import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.CameraPositionState
-import com.google.maps.android.compose.GoogleMap
-import com.google.maps.android.compose.MapProperties
-import com.google.maps.android.compose.MapUiSettings
-import com.google.maps.android.compose.Marker
-import com.google.maps.android.compose.MarkerState
-import com.google.maps.android.compose.rememberCameraPositionState
 import com.washgo.core.designsystem.theme.RapidoCarbonBlack
 import com.washgo.core.designsystem.theme.RapidoSuccessGreen
 import com.washgo.core.designsystem.theme.RapidoSurfaceWhite
@@ -72,7 +62,49 @@ import com.washgo.core.designsystem.theme.RapidoYellowPrimary
 import com.washgo.user.BuildConfig
 import com.washgo.user.data.network.NearbyAgentDto
 import kotlinx.coroutines.launch
+import org.maplibre.android.MapLibre
+import org.maplibre.android.annotations.MarkerOptions
+import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.maps.MapView
 import kotlin.math.roundToInt
+
+@Composable
+fun rememberMapViewWithLifecycle(): MapView {
+    val context = LocalContext.current
+    val mapView = remember {
+        MapLibre.getInstance(context.applicationContext)
+        MapView(context).apply {
+            id = View.generateViewId()
+        }
+    }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, mapView) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> mapView.onStart()
+                Lifecycle.Event.ON_RESUME -> mapView.onResume()
+                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
+                Lifecycle.Event.ON_STOP -> mapView.onStop()
+                Lifecycle.Event.ON_DESTROY -> mapView.onDestroy()
+                else -> Unit
+            }
+        }
+        mapView.onCreate(null)
+        mapView.onStart()
+        mapView.onResume()
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            mapView.onPause()
+            mapView.onStop()
+            mapView.onDestroy()
+        }
+    }
+    return mapView
+}
 
 @Composable
 fun GoogleMapView(
@@ -92,9 +124,8 @@ fun GoogleMapView(
         LatLng(locationState.latitude, locationState.longitude)
     }
 
-    val cameraPositionState: CameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(initialPosition, 15f)
-    }
+    val mapView = rememberMapViewWithLifecycle()
+    var mapInstance by remember { mutableStateOf<MapLibreMap?>(null) }
 
     var hasLocationPermission by remember {
         mutableStateOf(
@@ -118,21 +149,12 @@ fun GoogleMapView(
         if (granted) {
             fetchGpsLocation(context) { lat, lng ->
                 coroutineScope.launch {
-                    cameraPositionState.animate(
-                        CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), 16f)
+                    mapInstance?.animateCamera(
+                        CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), 16.0)
                     )
                 }
                 onSnapToGps(lat, lng)
             }
-        }
-    }
-
-    // React to camera movements when user pans the map
-    LaunchedEffect(cameraPositionState.isMoving) {
-        onPinDragStateChanged(cameraPositionState.isMoving)
-        if (!cameraPositionState.isMoving && !locationState.isLocked) {
-            val target = cameraPositionState.position.target
-            onPinMoved(target.latitude, target.longitude)
         }
     }
 
@@ -148,72 +170,85 @@ fun GoogleMapView(
         label = "shadowScale"
     )
 
-    // Free-tier API key state check
-    val isApiKeyConfigured = remember {
-        val key = BuildConfig.MAPS_API_KEY
-        key.isNotBlank() && key != "DEFAULT_KEY"
+    // Setup map asynchronously
+    LaunchedEffect(mapView) {
+        mapView.getMapAsync { map ->
+            val styleUrl = BuildConfig.MAPLIBRE_STYLE_URL.ifBlank { "https://demotiles.maplibre.org/style.json" }
+            map.setStyle(styleUrl) {
+                mapInstance = map
+                map.cameraPosition = CameraPosition.Builder()
+                    .target(initialPosition)
+                    .zoom(15.0)
+                    .build()
+                map.uiSettings.apply {
+                    isCompassEnabled = true
+                    isRotateGesturesEnabled = true
+                    isTiltGesturesEnabled = false
+                    isZoomGesturesEnabled = true
+                    isScrollGesturesEnabled = true
+                }
+                map.addOnCameraMoveStartedListener {
+                    onPinDragStateChanged(true)
+                }
+                map.addOnCameraIdleListener {
+                    onPinDragStateChanged(false)
+                    val target = map.cameraPosition.target
+                    if (target != null && !locationState.isLocked) {
+                        onPinMoved(target.latitude, target.longitude)
+                    }
+                }
+            }
+        }
+    }
+
+    // Render Markers for nearby agents returned from PostGIS
+    @Suppress("DEPRECATION")
+    LaunchedEffect(nearbyAgents, mapInstance) {
+        val map = mapInstance ?: return@LaunchedEffect
+        map.clear()
+        nearbyAgents.forEach { agent ->
+            map.addMarker(
+                MarkerOptions()
+                    .position(LatLng(agent.latitude, agent.longitude))
+                    .title(agent.name)
+                    .snippet("${agent.formattedEta} • ⭐ ${String.format("%.1f", agent.rating)} • ${String.format("%.1f", agent.distanceKm)} km")
+            )
+        }
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        // 1. Real Interactive Google Map
-        GoogleMap(
-            modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraPositionState,
-            properties = MapProperties(
-                isMyLocationEnabled = hasLocationPermission
-            ),
-            uiSettings = MapUiSettings(
-                myLocationButtonEnabled = false,
-                zoomControlsEnabled = false,
-                compassEnabled = true,
-                rotationGesturesEnabled = true,
-                tiltGesturesEnabled = false,
-                mapToolbarEnabled = false
-            )
-        ) {
-            // Render Real Markers for nearby agents returned from PostGIS
-            nearbyAgents.forEach { agent ->
-                Marker(
-                    state = MarkerState(position = LatLng(agent.latitude, agent.longitude)),
-                    title = agent.name,
-                    snippet = "${agent.formattedEta} • ⭐ ${String.format("%.1f", agent.rating)} • ${String.format("%.1f", agent.distanceKm)} km",
-                    icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE)
-                )
-            }
-        }
+        // 1. Interactive MapLibre Map
+        AndroidView(
+            factory = { mapView },
+            modifier = Modifier.fillMaxSize()
+        )
 
-        // 2. Free-tier API Key Status Banner (if key not configured)
-        AnimatedVisibility(
-            visible = !isApiKeyConfigured,
-            enter = fadeIn(),
-            exit = fadeOut(),
+        // 2. OpenStreetMap / MapLibre Attribution & Status Banner
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = RapidoCarbonBlack.copy(alpha = 0.90f),
+            shadowElevation = 4.dp,
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .padding(top = 74.dp, start = 16.dp, end = 16.dp)
         ) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = RapidoCarbonBlack.copy(alpha = 0.90f),
-                shadowElevation = 4.dp
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Info,
-                        contentDescription = "Maps Info",
-                        tint = RapidoYellowPrimary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Google Maps SDK active • Set MAPS_API_KEY in gradle.properties for custom tiles. GPS pin & PostGIS search fully operational.",
-                        fontSize = 11.sp,
-                        color = Color.White,
-                        lineHeight = 14.sp
-                    )
-                }
+                Icon(
+                    imageVector = Icons.Filled.Info,
+                    contentDescription = "Maps Info",
+                    tint = RapidoYellowPrimary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "MapLibre Native active • OpenStreetMap vector tiles (© OpenStreetMap contributors) • GPS pin & PostGIS search fully operational.",
+                    fontSize = 11.sp,
+                    color = Color.White,
+                    lineHeight = 14.sp
+                )
             }
         }
 
@@ -291,8 +326,8 @@ fun GoogleMapView(
                 if (hasLocationPermission) {
                     fetchGpsLocation(context) { lat, lng ->
                         coroutineScope.launch {
-                            cameraPositionState.animate(
-                                CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), 16f)
+                            mapInstance?.animateCamera(
+                                CameraUpdateFactory.newLatLngZoom(LatLng(lat, lng), 16.0)
                             )
                         }
                         onSnapToGps(lat, lng)

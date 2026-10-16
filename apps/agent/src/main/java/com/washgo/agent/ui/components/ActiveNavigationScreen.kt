@@ -27,8 +27,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
+import android.view.View
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,15 +46,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.GoogleMap
-import com.google.maps.android.compose.MapProperties
-import com.google.maps.android.compose.MapUiSettings
-import com.google.maps.android.compose.Marker
-import com.google.maps.android.compose.MarkerState
-import com.google.maps.android.compose.rememberCameraPositionState
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.washgo.agent.BuildConfig
 import com.washgo.agent.data.model.AgentJobNotificationMessage
 import com.washgo.agent.data.model.AgentLocationUpdate
 import com.washgo.agent.data.model.BookingStatusUpdateMessage
@@ -65,12 +64,53 @@ import com.washgo.core.designsystem.theme.RapidoSurfaceWhite
 import com.washgo.core.designsystem.theme.RapidoTextPrimary
 import com.washgo.core.designsystem.theme.RapidoTextSecondary
 import com.washgo.core.designsystem.theme.RapidoYellowPrimary
+import org.maplibre.android.MapLibre
+import org.maplibre.android.annotations.MarkerOptions
+import org.maplibre.android.camera.CameraPosition
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.maps.MapView
 
 enum class ActiveJobStage {
     EN_ROUTE,
     ARRIVED,
     WASHING,
     COMPLETED
+}
+
+@Composable
+private fun rememberMapViewWithLifecycle(): MapView {
+    val context = LocalContext.current
+    val mapView = remember {
+        MapLibre.getInstance(context.applicationContext)
+        MapView(context).apply {
+            id = View.generateViewId()
+        }
+    }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, mapView) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> mapView.onStart()
+                Lifecycle.Event.ON_RESUME -> mapView.onResume()
+                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
+                Lifecycle.Event.ON_STOP -> mapView.onStop()
+                Lifecycle.Event.ON_DESTROY -> mapView.onDestroy()
+                else -> Unit
+            }
+        }
+        mapView.onCreate(null)
+        mapView.onStart()
+        mapView.onResume()
+        lifecycle.addObserver(observer)
+        onDispose {
+            lifecycle.removeObserver(observer)
+            mapView.onPause()
+            mapView.onStop()
+            mapView.onDestroy()
+        }
+    }
+    return mapView
 }
 
 @Composable
@@ -107,8 +147,45 @@ fun ActiveNavigationScreen(
         }
     }
 
-    val cameraPositionState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(customerLatLng, 15f)
+    val mapView = rememberMapViewWithLifecycle()
+    var mapInstance by remember { mutableStateOf<MapLibreMap?>(null) }
+
+    LaunchedEffect(mapView) {
+        mapView.getMapAsync { map ->
+            val styleUrl = BuildConfig.MAPLIBRE_STYLE_URL.ifBlank { "https://demotiles.maplibre.org/style.json" }
+            map.setStyle(styleUrl) {
+                mapInstance = map
+                map.cameraPosition = CameraPosition.Builder()
+                    .target(customerLatLng)
+                    .zoom(15.0)
+                    .build()
+                map.uiSettings.apply {
+                    isCompassEnabled = true
+                    isRotateGesturesEnabled = true
+                    isTiltGesturesEnabled = false
+                    isZoomGesturesEnabled = true
+                    isScrollGesturesEnabled = true
+                }
+            }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    LaunchedEffect(customerLatLng, agentLatLng, mapInstance) {
+        val map = mapInstance ?: return@LaunchedEffect
+        map.clear()
+        map.addMarker(
+            MarkerOptions()
+                .position(customerLatLng)
+                .title("Customer: ${job.customerName ?: "Customer"}")
+                .snippet("Vehicle: ${job.vehicleType ?: "Car"} • ${job.customerAddress ?: "Location"}")
+        )
+        map.addMarker(
+            MarkerOptions()
+                .position(agentLatLng)
+                .title("Your Position")
+                .snippet("En route to wash location")
+        )
     }
 
     Box(
@@ -116,34 +193,11 @@ fun ActiveNavigationScreen(
             .fillMaxSize()
             .background(Color(0xFFE8ECEF))
     ) {
-        // 1. Real Google Map with Customer & Agent Markers
-        GoogleMap(
-            modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraPositionState,
-            properties = MapProperties(isMyLocationEnabled = false),
-            uiSettings = MapUiSettings(
-                myLocationButtonEnabled = false,
-                zoomControlsEnabled = false,
-                compassEnabled = true,
-                mapToolbarEnabled = false
-            )
-        ) {
-            // Customer Destination Marker
-            Marker(
-                state = MarkerState(position = customerLatLng),
-                title = "Customer: ${job.customerName ?: "Customer"}",
-                snippet = "Vehicle: ${job.vehicleType ?: "Car"} • ${job.customerAddress ?: "Location"}",
-                icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_RED)
-            )
-
-            // Agent Marker
-            Marker(
-                state = MarkerState(position = agentLatLng),
-                title = "Your Position",
-                snippet = "En route to wash location",
-                icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE)
-            )
-        }
+        // 1. Interactive MapLibre Map with Customer & Agent Markers
+        AndroidView(
+            factory = { mapView },
+            modifier = Modifier.fillMaxSize()
+        )
 
         // 2. Top Navigation HUD Card
         Surface(
